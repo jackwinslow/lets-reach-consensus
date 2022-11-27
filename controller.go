@@ -1,93 +1,166 @@
 package main
 
 import (
-	"bufio"
 	"encoding/gob"
 	"fmt"
+	"log"
 	"net"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 )
 
-func handle_connections(source net.Listener, nodes *sync.Map) {
-	for {
-		c, err := source.Accept()
-		if err != nil {
-			fmt.Println(err)
-			return
+type message struct {
+	v float32
+	r int
+}
+
+type sendable struct {
+	Type     string // "PORTLIST", "START", "KILL"
+	Portlist []int
+}
+
+type receivable struct {
+	Type  string // "PORT", "STATE"
+	Port  int
+	State message
+}
+
+type p struct {
+	mu   sync.Mutex
+	List []int
+}
+
+type n struct {
+	mu       sync.Mutex
+	Encoders map[int]*gob.Encoder
+}
+
+type round struct {
+	mu       sync.Mutex
+	min      float32
+	max      float32
+	average  float32
+	num_rec  int
+	received []message
+}
+
+type overview struct {
+	mu     sync.Mutex
+	Rounds map[int]*round
+}
+
+func initOverview() *overview {
+	m := make(map[int]*round)
+	return &overview{Rounds: m}
+}
+
+// adds the message to the overview, return the new difference and average of the messages round
+func (o *overview) addMessage(m message) (diff float32, nr int, avg float32) {
+	o.mu.Lock()
+	if _, ok := o.Rounds[m.r]; !ok { // if round the round doesn't exist
+		// map a round struct to the round number, initialize with message
+		o.Rounds[m.r] = &round{min: m.v, max: m.v, average: m.v, num_rec: 1, received: []message{m}}
+		o.mu.Unlock()
+	} else {
+		// update round values as necessary
+		r := o.Rounds[m.r]
+		o.mu.Unlock() // since r is a pointer, we no longer access overview and can release it, using round lock instead
+		r.mu.Lock()
+		if m.v < r.min {
+			r.min = m.v
 		}
-
-		// Handle incoming messages from client
-		go func() {
-			dec := gob.NewDecoder(c)
-			var message string
-			nodeport := ""
-			for {
-				err = dec.Decode(&message)
-				if err != nil {
-					return
-				}
-
-				// Add node encoder to nodes map on receiving first message, assuming it is the port from node
-				if nodeport == "" {
-					(*nodes).Store(message, gob.NewEncoder(c))
-					nodeport = message
-					fmt.Println("New Node: " + nodeport)
-					continue
-				}
-
-				// Handle other messages from node
-			}
-		}()
+		mn := r.min
+		if m.v > r.max {
+			r.max = m.v
+		}
+		mx := r.max
+		r.average = (r.average*float32(r.num_rec) + m.v) / (float32(r.num_rec) + 1)
+		av := r.average
+		r.num_rec += 1
+		nr := r.num_rec
+		r.received = append(r.received, m)
+		r.mu.Unlock()
+		return (mx - mn), nr, av
 	}
+	return 0, 1, m.v // WARNING: diff is 0 if adding first message of round, should be handled
 }
 
 func main() {
 
 	// Initialize receiver
-	address := "127.0.0.1:8080" //+ port
+	address := "127.0.0.1:8080"
 	l, err := net.Listen("tcp", address)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
+	var list []int
+	ports := p{List: list}
+
+	encoders := make(map[int]*gob.Encoder)
+	nodes := n{Encoders: encoders}
+
+	ov := initOverview()
+
+	gold_chain := make(chan int)
+
+	go func() {
+
+		for {
+
+			// accept incoming connections
+			c, err := l.Accept()
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			go func() {
+
+				// create decoder
+				dec := gob.NewDecoder(c)
+				var received receivable
+				for {
+					// listen for receivable message
+					err := dec.Decode(&received)
+					if err != nil {
+						log.Fatal(err)
+					}
+
+					fmt.Println(received)
+
+					switch received.Type {
+					// if receivable is a port message
+					case "PORT":
+						// append port to ports list
+						ports.mu.Lock()
+						nodes.mu.Lock()
+						ports.List = append(ports.List, received.Port)
+						nodes.Encoders[received.Port] = gob.NewEncoder(c)
+						nodes.mu.Unlock()
+						ports.mu.Unlock()
+
+					case "STATE":
+						// add state message to overview, if difference leq than threshold, output round & average
+						if diff, m_in_r, average := ov.addMessage(received.State); diff <= 0.001 {
+							if m_in_r >= 5 { // 5 is placeholder, should be number of non-failed nodes
+								final_round := received.State.r
+								gold_chain <- 1
+								fmt.Println(final_round)
+								fmt.Println(average)
+							}
+						}
+					}
+
+				}
+			}()
+
+		}
+	}()
+
 	defer l.Close()
 
-	var nodes sync.Map
+	<-gold_chain
+	// TIME TO DIE, send sendable{Type: "KILL"} to all nodes
 
-	go handle_connections(l, &nodes)
-
-	// Awaits user input to begin experiment
-	for {
-		reader := bufio.NewReader(os.Stdin)
-		text, _ := reader.ReadString('\n')
-
-		text = strings.TrimSpace(text)
-
-		faults, err := strconv.Atoi(text)
-		if err != nil {
-			fmt.Println("Please enter an integer for fault tolerance")
-			continue
-		}
-
-		var nodeList []string
-
-		// Create nodeList
-		nodes.Range(func(key, value interface{}) bool {
-			nodeList = append(nodeList, key.(string))
-			return true
-		})
-
-		nodes.Range(func(key, value interface{}) bool {
-			outgoingEnc := value.(*gob.Encoder)
-			messageMap := make(map[string]interface{})
-			messageMap["faults"] = faults
-			messageMap["nodes"] = nodeList
-			outgoingEnc.Encode(messageMap)
-			return true
-		})
-	}
 }
