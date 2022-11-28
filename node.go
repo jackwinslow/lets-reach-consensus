@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -126,7 +127,7 @@ func main() {
 	nodes = start_message.Portlist
 	n = len(nodes) + 1
 	f = start_message.Faults
-	fmt.Println(nodes, n, f)
+	// fmt.Println(nodes, n, f)
 
 	// ------------------- SETUP UNICAST -------------------
 
@@ -148,6 +149,7 @@ func main() {
 	// -----------------------------------------------------
 
 	// Each loop is one round
+	consensus := false
 	for {
 		r = r + 1
 		// UNICAST TO EVERYONE ELSE
@@ -168,31 +170,31 @@ func main() {
 
 			// Simulates sending message to self
 			//ov.Rounds[r] = &round{min: curr_message.V, max: curr_message.V, average: curr_message.V, num_rec: 1, received: []message{curr_message}}
-			ov.Rounds[r] = &round{}
+			ov.Rounds[r] = &round{min: float32(math.Inf(1)), max: float32(math.Inf(-1))}
 			cr = ov.Rounds[r]
 		}
 		ov.mu.Unlock()
 		for {
 			cr.mu.Lock()
-			fmt.Println(cr.min, cr.max, cr.average, cr.num_rec, cr.received)
 			if cr.num_rec >= (n - (f + 1)) {
 				if curr_message.V < cr.min {
 					cr.min = curr_message.V
 				}
-				mn := cr.min
+				// mn := cr.min
 				if curr_message.V > cr.max {
 					cr.max = curr_message.V
 				}
-				mx := cr.max
+				// mx := cr.max
 				cr.average = (cr.average*float32(cr.num_rec) + curr_message.V) / (float32(cr.num_rec) + 1)
-				av := cr.average
+				// av := cr.average
 				cr.num_rec += 1
-				nr := cr.num_rec
+				// nr := cr.num_rec
 				cr.received = append(cr.received, curr_message)
 				cr.mu.Unlock()
-				if mx-mn <= 0.001 {
-					fmt.Println(mn, mx, av, nr, cr.received)
-					log.Fatal("CONSESNDSDSD")
+				// fmt.Println(cr.min, cr.max, cr.average, cr.num_rec, cr.received)
+				if cr.max-cr.min <= 0.001 {
+					// fmt.Println(cr.min, cr.max, cr.average, cr.num_rec, cr.received)
+					consensus = true
 				}
 				break
 			}
@@ -204,14 +206,16 @@ func main() {
 
 		state = ov.Rounds[r].average
 
-		time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
+		// time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
 
-		if (ov.Rounds[r].max - ov.Rounds[r].min) <= 0.001 {
+		if consensus {
 			break
 		}
 	}
 
 	fmt.Println("Reached consenus")
+
+	time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
 }
 
 func initialize_source(port int) net.Listener {
@@ -259,6 +263,6 @@ func initialize_outgoing(port int) gob.Encoder {
 func unicast_send(enc gob.Encoder, message message) {
 	err := enc.Encode(message)
 	if err != nil {
-		log.Fatal()
+		fmt.Println("Node no longer connected")
 	}
 }
