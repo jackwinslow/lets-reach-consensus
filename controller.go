@@ -1,21 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"encoding/gob"
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 )
 
 type message struct {
-	v float32
-	r int
+	V float32
+	R int
 }
 
 type sendable struct {
-	Type     string // "PORTLIST", "START", "KILL"
+	Type     string // "START", "KILL"
 	Portlist []int
+	Faults   int
 }
 
 type receivable struct {
@@ -56,24 +61,24 @@ func initOverview() *overview {
 // adds the message to the overview, return the new difference and average of the messages round
 func (o *overview) addMessage(m message) (diff float32, nr int, avg float32) {
 	o.mu.Lock()
-	if _, ok := o.Rounds[m.r]; !ok { // if round the round doesn't exist
+	if _, ok := o.Rounds[m.R]; !ok { // if round the round doesn't exist
 		// map a round struct to the round number, initialize with message
-		o.Rounds[m.r] = &round{min: m.v, max: m.v, average: m.v, num_rec: 1, received: []message{m}}
+		o.Rounds[m.R] = &round{min: m.V, max: m.V, average: m.V, num_rec: 1, received: []message{m}}
 		o.mu.Unlock()
 	} else {
 		// update round values as necessary
-		r := o.Rounds[m.r]
+		r := o.Rounds[m.R]
 		o.mu.Unlock() // since r is a pointer, we no longer access overview and can release it, using round lock instead
 		r.mu.Lock()
-		if m.v < r.min {
-			r.min = m.v
+		if m.V < r.min {
+			r.min = m.V
 		}
 		mn := r.min
-		if m.v > r.max {
-			r.max = m.v
+		if m.V > r.max {
+			r.max = m.V
 		}
 		mx := r.max
-		r.average = (r.average*float32(r.num_rec) + m.v) / (float32(r.num_rec) + 1)
+		r.average = (r.average*float32(r.num_rec) + m.V) / (float32(r.num_rec) + 1)
 		av := r.average
 		r.num_rec += 1
 		nr := r.num_rec
@@ -81,7 +86,7 @@ func (o *overview) addMessage(m message) (diff float32, nr int, avg float32) {
 		r.mu.Unlock()
 		return (mx - mn), nr, av
 	}
-	return 0, 1, m.v // WARNING: diff is 0 if adding first message of round, should be handled
+	return 0, 1, m.V // WARNING: diff is 0 if adding first message of round, should be handled
 }
 
 func main() {
@@ -102,7 +107,10 @@ func main() {
 
 	ov := initOverview()
 
+	// Channel used to trigger kill switch
 	gold_chain := make(chan int)
+
+	var faults int
 
 	go func() {
 
@@ -127,8 +135,6 @@ func main() {
 						log.Fatal(err)
 					}
 
-					fmt.Println(received)
-
 					switch received.Type {
 					// if receivable is a port message
 					case "PORT":
@@ -143,8 +149,8 @@ func main() {
 					case "STATE":
 						// add state message to overview, if difference leq than threshold, output round & average
 						if diff, m_in_r, average := ov.addMessage(received.State); diff <= 0.001 {
-							if m_in_r >= 5 { // 5 is placeholder, should be number of non-failed nodes
-								final_round := received.State.r
+							if m_in_r >= len(nodes.Encoders)-faults {
+								final_round := received.State.R
 								gold_chain <- 1
 								fmt.Println(final_round)
 								fmt.Println(average)
@@ -160,7 +166,40 @@ func main() {
 
 	defer l.Close()
 
-	<-gold_chain
+	// Awaits user input to begin experiment
+	initialize := true
+	for initialize {
+		reader := bufio.NewReader(os.Stdin)
+		text, _ := reader.ReadString('\n')
+
+		text = strings.TrimSpace(text)
+
+		conv, err := strconv.Atoi(text)
+		faults := conv
+		if err != nil {
+			fmt.Println("Please enter an integer for fault tolerance")
+			continue
+		}
+
+		start_message := sendable{
+			Type:     "START",
+			Portlist: ports.List,
+			Faults:   faults,
+		}
+
+		// Create nodeList
+		for _, node := range nodes.Encoders {
+			node.Encode(start_message)
+		}
+
+		initialize = false
+	}
+
+	for {
+
+	}
+
+	// <-gold_chain
 	// TIME TO DIE, send sendable{Type: "KILL"} to all nodes
 
 }
