@@ -84,7 +84,7 @@ func main() {
 	var state float32
 	var n, f int
 	var nodes []int
-	round := 0
+	r := 0
 	ov := initOverview()
 
 	port, err := strconv.Atoi(os.Args[1])
@@ -106,6 +106,8 @@ func main() {
 		return
 	}
 
+	fmt.Println("Connected to Host!")
+
 	// Sends the controller port # upon connection initialization
 	enc := gob.NewEncoder(c)
 	err = enc.Encode(receivable{Type: "PORT", Port: port})
@@ -122,7 +124,7 @@ func main() {
 	}
 
 	nodes = start_message.Portlist
-	n = len(nodes)
+	n = len(nodes) + 1
 	f = start_message.Faults
 	fmt.Println(nodes, n, f)
 
@@ -147,11 +149,11 @@ func main() {
 
 	// Each loop is one round
 	for {
-		round = round + 1
-		// UNICAST TO EVERYONE ELSE INCLUDING SELF
+		r = r + 1
+		// UNICAST TO EVERYONE ELSE
 		curr_message := message{
 			V: state,
-			R: round,
+			R: r,
 		}
 		go func() {
 			for _, encoder := range encoders {
@@ -160,22 +162,51 @@ func main() {
 		}()
 
 		// Do waiting here
+		ov.mu.Lock()
+		cr, ok := ov.Rounds[r]
+		if !ok {
+
+			// Simulates sending message to self
+			//ov.Rounds[r] = &round{min: curr_message.V, max: curr_message.V, average: curr_message.V, num_rec: 1, received: []message{curr_message}}
+			ov.Rounds[r] = &round{}
+			cr = ov.Rounds[r]
+		}
+		ov.mu.Unlock()
 		for {
-			if _, ok := ov.Rounds[round]; ok {
-				if ov.Rounds[round].num_rec <= (n - f) {
-					break
+			cr.mu.Lock()
+			fmt.Println(cr.min, cr.max, cr.average, cr.num_rec, cr.received)
+			if cr.num_rec >= (n - (f + 1)) {
+				if curr_message.V < cr.min {
+					cr.min = curr_message.V
 				}
+				mn := cr.min
+				if curr_message.V > cr.max {
+					cr.max = curr_message.V
+				}
+				mx := cr.max
+				cr.average = (cr.average*float32(cr.num_rec) + curr_message.V) / (float32(cr.num_rec) + 1)
+				av := cr.average
+				cr.num_rec += 1
+				nr := cr.num_rec
+				cr.received = append(cr.received, curr_message)
+				cr.mu.Unlock()
+				if mx-mn <= 0.001 {
+					fmt.Println(mn, mx, av, nr, cr.received)
+					log.Fatal("CONSESNDSDSD")
+				}
+				break
 			}
+			cr.mu.Unlock()
 		}
 
-		fmt.Print("Completed Round " + strconv.Itoa(round) + ":")
-		fmt.Println(ov.Rounds[round].average)
+		fmt.Print("Completed Round " + strconv.Itoa(r) + ": ")
+		fmt.Println(ov.Rounds[r].average)
 
-		state = ov.Rounds[round].average
+		state = ov.Rounds[r].average
 
 		time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
 
-		if round > 10 {
+		if (ov.Rounds[r].max - ov.Rounds[r].min) <= 0.001 {
 			break
 		}
 	}

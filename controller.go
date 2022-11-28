@@ -182,13 +182,21 @@ func main() {
 		}
 
 		start_message := sendable{
-			Type:     "START",
-			Portlist: ports.List,
-			Faults:   faults,
+			Type:   "START",
+			Faults: faults,
 		}
 
-		// Create nodeList
-		for _, node := range nodes.Encoders {
+		// Sending portlist
+		for np, node := range nodes.Encoders {
+			// remove np from ports.List
+			sending := []int{}
+			for _, port := range ports.List {
+				if port != np {
+					sending = append(sending, port)
+				}
+			}
+			start_message.Portlist = sending
+
 			node.Encode(start_message)
 		}
 
