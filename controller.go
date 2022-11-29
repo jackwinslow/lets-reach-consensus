@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
+
 	"net"
 	"os"
 	"strconv"
@@ -48,46 +49,9 @@ type round struct {
 	received []message
 }
 
-type overview struct {
-	mu     sync.Mutex
-	Rounds map[int]*round
-}
 
-func initOverview() *overview {
-	m := make(map[int]*round)
-	return &overview{Rounds: m}
-}
 
-// adds the message to the overview, return the new difference and average of the messages round
-func (o *overview) addMessage(m message) (diff float32, nr int, avg float32) {
-	o.mu.Lock()
-	if _, ok := o.Rounds[m.R]; !ok { // if round the round doesn't exist
-		// map a round struct to the round number, initialize with message
-		o.Rounds[m.R] = &round{min: m.V, max: m.V, average: m.V, num_rec: 1, received: []message{m}}
-		o.mu.Unlock()
-	} else {
-		// update round values as necessary
-		r := o.Rounds[m.R]
-		o.mu.Unlock() // since r is a pointer, we no longer access overview and can release it, using round lock instead
-		r.mu.Lock()
-		if m.V < r.min {
-			r.min = m.V
-		}
-		mn := r.min
-		if m.V > r.max {
-			r.max = m.V
-		}
-		mx := r.max
-		r.average = (r.average*float32(r.num_rec) + m.V) / (float32(r.num_rec) + 1)
-		av := r.average
-		r.num_rec += 1
-		nr := r.num_rec
-		r.received = append(r.received, m)
-		r.mu.Unlock()
-		return (mx - mn), nr, av
-	}
-	return 0, 1, m.V // WARNING: diff is 0 if adding first message of round, should be handled
-}
+
 
 func main() {
 
@@ -105,13 +69,6 @@ func main() {
 	encoders := make(map[int]*gob.Encoder)
 	nodes := n{Encoders: encoders}
 
-	ov := initOverview()
-
-	// Channel used to trigger kill switch
-	gold_chain := make(chan int)
-
-	var faults int
-
 	go func() {
 
 		for {
@@ -119,8 +76,7 @@ func main() {
 			// accept incoming connections
 			c, err := l.Accept()
 			if err != nil {
-				fmt.Println(err)
-				return
+				return // silent suicide is performed since
 			}
 
 			go func() {
@@ -132,7 +88,10 @@ func main() {
 					// listen for receivable message
 					err := dec.Decode(&received)
 					if err != nil {
-						log.Fatal(err)
+						if err.Error() == "EOF" {
+							log.Println("A node has reached consensus")
+							break
+						}
 					}
 
 					switch received.Type {
@@ -145,19 +104,7 @@ func main() {
 						nodes.Encoders[received.Port] = gob.NewEncoder(c)
 						nodes.mu.Unlock()
 						ports.mu.Unlock()
-
-					case "STATE":
-						// add state message to overview, if difference leq than threshold, output round & average
-						if diff, m_in_r, average := ov.addMessage(received.State); diff <= 0.001 {
-							if m_in_r >= len(nodes.Encoders)-faults {
-								final_round := received.State.R
-								gold_chain <- 1
-								fmt.Println(final_round)
-								fmt.Println(average)
-							}
-						}
 					}
-
 				}
 			}()
 
@@ -168,8 +115,8 @@ func main() {
 
 	// Awaits user input to begin experiment
 	initialize := true
+	reader := bufio.NewReader(os.Stdin)
 	for initialize {
-		reader := bufio.NewReader(os.Stdin)
 		text, _ := reader.ReadString('\n')
 
 		text = strings.TrimSpace(text)
@@ -204,10 +151,15 @@ func main() {
 	}
 
 	for {
-
+		text, _ := reader.ReadString('\n')
+		text = strings.TrimSpace(text)
+		if text == "KILL" {
+			log.Println("KILLING SIMULATION")
+			for _, node := range nodes.Encoders {
+				err = node.Encode(sendable{Type: "KILL"})
+				if err != nil {continue}
+			}
+			break
+		}
 	}
-
-	// <-gold_chain
-	// TIME TO DIE, send sendable{Type: "KILL"} to all nodes
-
 }
