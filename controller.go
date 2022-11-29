@@ -77,7 +77,7 @@ func main() {
 					if err != nil {
 						if err.Error() == "EOF" {
 							log.Println("A node has reached consensus")
-							break
+							return
 						}
 					}
 
@@ -97,8 +97,6 @@ func main() {
 
 		}
 	}()
-
-	defer l.Close()
 
 	// Awaits user input to begin experiment
 	initialize := true
@@ -137,6 +135,7 @@ func main() {
 		initialize = false
 	}
 
+	// wait for "KILL" to be written in stdin to send kill signal to all nodes
 	for {
 		text, _ := reader.ReadString('\n')
 		text = strings.TrimSpace(text)
@@ -149,4 +148,8 @@ func main() {
 			break
 		}
 	}
+	
+	l.Close()
+
+
 }

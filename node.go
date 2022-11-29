@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -49,7 +50,7 @@ func initOverview() *overview {
 }
 
 // adds the message to the overview, return the new difference and average of the messages round
-func (o *overview) addMessage(m message) (diff float32, nr int, avg float32) {
+func (o *overview) addMessage(m message) {
 	o.mu.Lock()
 	if _, ok := o.Rounds[m.R]; !ok { // if round the round doesn't exist
 		// map a round struct to the round number, initialize with message
@@ -63,20 +64,15 @@ func (o *overview) addMessage(m message) (diff float32, nr int, avg float32) {
 		if m.V < r.min {
 			r.min = m.V
 		}
-		mn := r.min
 		if m.V > r.max {
 			r.max = m.V
 		}
-		mx := r.max
 		r.average = (r.average*float32(r.num_rec) + m.V) / (float32(r.num_rec) + 1)
-		av := r.average
 		r.num_rec += 1
-		nr := r.num_rec
 		r.received = append(r.received, m)
 		r.mu.Unlock()
-		return (mx - mn), nr, av
+
 	}
-	return 0, 1, m.V // WARNING: diff is 0 if adding first message of round, should be handled
 }
 
 func main() {
@@ -84,7 +80,7 @@ func main() {
 	var state float32
 	var n, f int
 	var nodes []int
-	gold_chain := make(chan int)
+	gold_chain := make(chan int) // channel used to block main from completing execution, used as kill switch
 	r := 0
 	ov := initOverview()
 
@@ -124,14 +120,17 @@ func main() {
 		fmt.Println(decerr)
 	}
 
+	// goroutine to wait for message to kill execution
 	go func() {
-		var waiting_for_death sendable
+		var death_message sendable
 		for {
-			decerr := dec.Decode(&waiting_for_death)
+			decerr := dec.Decode(&death_message)
 			if decerr != nil {
 				fmt.Println(decerr)
 			}
-			gold_chain <- 1
+			if death_message.Type == "KILL" {
+				gold_chain <- 1
+			}
 		}
 	}()
 
@@ -219,7 +218,7 @@ func main() {
 
 			state = ov.Rounds[r].average
 
-			// time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
+			time.Sleep(time.Duration(rand.Intn(10)+5) * time.Millisecond) // added random delay bound
 
 			if consensus {
 				break
@@ -235,8 +234,9 @@ func main() {
 		// time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
 	}()
 
-	<-gold_chain
-	fmt.Println("KILLING SIMULATION")
+	<-gold_chain // channel blocks execution which would terminate the program
+	log.Fatal("KILLING SIMULATION")
+
 }
 
 func initialize_source(port int) net.Listener {
