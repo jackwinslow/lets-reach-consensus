@@ -1,7 +1,7 @@
 # lets-reach-consensus
 
 ## Usage
-To run the consensus experiment, open one terminal to act as the controller as well as however many extra terminals you would like to use as nodes. For the controller, run `go run controller.go` which will start the controller process. For each node, run `go run node.go <port number> <input>`, where the port should be anything but 8080 and the input should be 0 or 1. Once each node has displayed that it is connected to the host, begin the experiment by simply typing the fault tolerance you would like to use for the system `<faults>` into the controller terminal and press enter. This will trigger the experiment to begin simultaneously amongst all of the nodes. Typing `KILL` into the controller terminal will also kill the simulation at any time.
+To run the consensus experiment, open one terminal to act as the controller as well as however many extra terminals you would like to use as nodes. For the controller, run `go run controller.go` which will start the controller process. For each node, run `go run node.go <port number> <input>`, where the port should be anything but 8080 (this is the fixed controller port) and the input should be 0 or 1. Once each node has displayed that it is connected to the host, begin the experiment by simply typing the fault tolerance you would like to use for the system `<faults>` into the controller terminal and press enter. This will trigger the experiment to begin simultaneously amongst all of the nodes. Typing `KILL` into the controller terminal will also kill the simulation at any time.
 
 ## Program Flow
 
