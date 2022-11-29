@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -159,7 +158,9 @@ func main() {
 
 	// -----------------------------------------------------
 
+	// This is the main portion of the consensus algorithm
 	// Each loop is one round
+	start_time := time.Now()
 	go func() {
 		consensus := false
 		for {
@@ -224,9 +225,14 @@ func main() {
 				break
 			}
 		}
-		gold_chain <- 1
+		elapsed := time.Since(start_time)
 		fmt.Println("Reached consenus")
-		time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
+		fmt.Print("Rounds: ")
+		fmt.Print(r)
+		fmt.Print(", Time: ")
+		fmt.Println(elapsed)
+		gold_chain <- 1
+		// time.Sleep(time.Duration(rand.Intn(1000)+1000) * time.Millisecond)
 	}()
 
 	<-gold_chain
