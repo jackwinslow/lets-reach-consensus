@@ -40,19 +40,6 @@ type n struct {
 	Encoders map[int]*gob.Encoder
 }
 
-type round struct {
-	mu       sync.Mutex
-	min      float32
-	max      float32
-	average  float32
-	num_rec  int
-	received []message
-}
-
-
-
-
-
 func main() {
 
 	// Initialize receiver
